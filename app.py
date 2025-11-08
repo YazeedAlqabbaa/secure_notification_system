@@ -12,11 +12,12 @@ print("DBG CHAT_ID:", os.getenv("TELEGRAM_CHAT_ID"))
 
 
 app = Flask(__name__)
-DB_PATH = os.path.join(os.path.dirname(__file__), "app.db")
+import psycopg2
 
 def get_conn():
-    # نفتح اتصال خفيف بكل استدعاء ونقفل بعد الاستخدام
-    return sqlite3.connect(DB_PATH)
+    # اتصال بقاعدة بيانات PostgreSQL من Render
+    db_url = os.getenv("DATABASE_URL")
+    return psycopg2.connect(db_url)
 
 # دالة إرسال تنبيه إلى تيليجرام
 def send_telegram_alert(message):
