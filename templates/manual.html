@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Send Manual Alert</title>
+
+  <style>
+    /* تنسيق عام */
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background-color: #f5f7fb;
+      margin: 0;
+      padding-top: 60px;
+      text-align: center;
+      color: #222;
+    }
+
+    /* الشريط العلوي الموحد */
+    .status-bar {
+      background-color: #003366;
+      color: white;
+      padding: 12px 0;
+      font-size: 15px;
+      font-weight: 500;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 1000;
+    }
+
+    nav {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+    }
+
+    .nav-link {
+      color: white;
+      text-decoration: none;
+      font-size: 15px;
+      transition: background 0.3s, padding 0.2s;
+      padding: 8px 16px;
+      border-radius: 6px;
+    }
+
+    .nav-link:hover {
+      background-color: #004b99;
+    }
+
+    /* الصندوق الرئيسي */
+    .form-container {
+      background: white;
+      width: 400px;
+      margin: auto;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      padding: 25px;
+    }
+
+    h2 {
+      color: #003366;
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      text-align: left;
+      margin: 8px 0 4px;
+      color: #003366;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+
+    button {
+      background-color: #003366;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover {
+      background-color: #004b99;
+    }
+
+    a.back-link {
+      display: block;
+      margin-top: 12px;
+      text-decoration: none;
+      color: #003366;
+      font-size: 13.5px;
+    }
+
+    footer {
+      margin-top: 25px;
+      color: #555;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- الشريط العلوي الموحد -->
+  <div class="status-bar">
+    <nav>
+      <a href="{{ url_for('home') }}" class="nav-link">🏠 Home</a>
+      <a href="{{ url_for('list_alerts') }}" class="nav-link">🔔 Alerts</a>
+    </nav>
+  </div>
+
+  <!-- الصندوق الرئيسي -->
+  <div class="form-container">
+    <h2>Send Manual Alert</h2>
+    <form method="POST" action="/manual">
+      <label for="source">Source (device name)</label>
+      <input type="text" id="source" name="source" value="Manual_Test_Device" required>
+
+      <label for="event_type">Event Type</label>
+      <input type="text" id="event_type" name="event_type" value="unauthorized" required>
+
+      <label for="severity">Severity</label>
+      <select name="severity" required>
+     <option value="low">Low</option>
+     <option value="medium">Medium</option>
+     <option value="high">High</option>
+     <option value="critical">Critical</option>
+   </select>
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="3" placeholder="Enter alert message..."></textarea>
+
+      <button type="submit">Send Alert</button>
+    </form>
+
+    <a href="{{ url_for('list_alerts') }}" class="back-link">Back to Alerts</a>
+  </div>
+
+  <footer>
+    Developed by <b>Yazeed S. Alqabbaa</b> © 2025 — Department of Information Security
+  </footer>
+
+</body>
+</html>

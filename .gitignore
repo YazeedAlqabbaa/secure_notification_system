@@ -1,0 +1,12 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore environment variables
+.env
+
+# Ignore local virtual environments
+.venv/
+
+# Ignore database if using local testing
+app.db
