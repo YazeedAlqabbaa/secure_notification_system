@@ -1,15 +1,17 @@
 import requests
 
+# عنوان السيرفر المحلي
 url = "http://127.0.0.1:5000/alerts/add"
 
+# بيانات اختبار فيها كلمات خطيرة
 data = {
-    "source": "lab",
-    "event_type": "unauthorized",
-    "severity": "critical",
-    "message": "🚨 Telegram test from Flask"
+    "source": "test_system",
+    "event_type": "login",
+    "message": "Unauthorized access attempt detected"
 }
 
+# أرسل الطلب كـ JSON
+r = requests.post(url, json=data)
 
-response = requests.post(url, json=data)
-print("Status Code:", response.status_code)
-print("Response:", response.json())
+print("Status:", r.status_code)
+print("Response:", r.text)

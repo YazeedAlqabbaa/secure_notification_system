@@ -211,7 +211,7 @@ body {
         <h3>🧾 System Summary</h3>
         <p>System stable — all services running normally.<br>
            Stay updated on alerts and real-time status.</p>
-        <p><b>Last Critical Alert:</b> {{ last_critical_alert if last_critical_alert else 'No recent critical alerts' }}</p>
+        <p><b>Last Critical Alert:</b> {{ last_alert_time if last_alert_time else 'No recent critical alerts' }}</p>
         <button class="refresh-btn" onclick="location.reload();">🔄 Refresh Data</button>
       </div>
     </div>

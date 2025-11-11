@@ -1,72 +1,88 @@
 import os
-import psycopg2
+import sqlite3
 import requests
-from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
+from flask import Flask, request, jsonify, render_template, redirect, url_for, make_response
+from datetime import datetime
 from dotenv import load_dotenv
 
-# تحميل المتغيرات من ملف .env
+# تحميل متغيرات البيئة من ملف .env (لو موجود)
 load_dotenv()
-
-print("DBG TOKEN:", os.getenv("TELEGRAM_TOKEN"))
-print("DBG CHAT_ID:", os.getenv("TELEGRAM_CHAT_ID"))
 
 app = Flask(__name__)
 
-# دالة الاتصال بقاعدة PostgreSQL في Render
+# ------------------------------------------
+# 🔹 دالة إنشاء اتصال بقاعدة البيانات المحلية app.db
+# ------------------------------------------
 def get_conn():
-    db_url = os.getenv("DATABASE_URL")
-    return psycopg2.connect(db_url)
+    return sqlite3.connect("app.db")
 
 # ------------------------------------------
-# دالة إرسال تنبيه إلى تيليجرام
+# 🔹 دالة إرسال تنبيه إلى Telegram
 # ------------------------------------------
 def send_telegram_alert(message):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
     if not token or not chat_id:
-        print("⚠️ Telegram not configured")
+        print("⚠️ لم يتم إعداد Telegram.")
         return
 
-    # عنوان واجهة Telegram API
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message}
 
     try:
         resp = requests.post(url, data=payload, timeout=10)
-        print("TG status:", resp.status_code, resp.text)
+        print("📤 تم إرسال التنبيه إلى Telegram:", resp.status_code)
     except Exception as e:
-        print("Error sending telegram message:", e)
+        print("❌ خطأ أثناء الإرسال إلى Telegram:", e)
 
 # ------------------------------------------
-# الصفحة الرئيسية (Home)
 # ------------------------------------------
+# 🔹 دالة لتصنيف مستوى الخطورة تلقائيًا حسب الرسالة
+# ------------------------------------------
+def classify_event(message):
+    msg = message.lower()
+    if "unauthorized" in msg or "failed login" in msg or "attack" in msg:
+        return "critical"
+    elif "warning" in msg or "error" in msg or "timeout" in msg:
+        return "high"
+    elif "disconnect" in msg or "delay" in msg:
+        return "medium"
+    else:
+        return "low"
+# 🔹 الصفحة الرئيسية (Dashboard)
+# ------------------------------------------
+
 @app.route('/')
 def home():
-    from datetime import datetime
     conn = get_conn()
     cursor = conn.cursor()
 
-    # دالة تحسب عدد السجلات بأمان (ترجع 0 لو مافيه نتيجة)
     def safe_count(query):
         cursor.execute(query)
         result = cursor.fetchone()
         return result[0] if result and result[0] is not None else 0
 
-    # إحصائيات التنبيهات حسب مستوى الخطورة
+    # حساب الإحصائيات
     total_alerts = safe_count("SELECT COUNT(*) FROM alerts")
     critical_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='critical'")
     high_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='high'")
     medium_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='medium'")
     low_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='low'")
 
-    # آخر وقت تنبيه
-    cursor.execute("SELECT created_at FROM alerts ORDER BY id DESC LIMIT 1")
+    # آخر وقت تنبيه حرج فقط
+    cursor.execute("SELECT created_at FROM alerts WHERE severity='critical' ORDER BY id DESC LIMIT 1")
     last_alert = cursor.fetchone()
-    last_alert_time = last_alert[0] if last_alert else "No alerts yet"
+
+    if last_alert:
+        from datetime import datetime
+        dt = datetime.strptime(str(last_alert[0]), "%Y-%m-%d %H:%M:%S.%f")
+        last_alert_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        last_alert_time = "No recent critical alerts"
 
     conn.close()
 
-    # آخر تحديث (الوقت الحالي)
     last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     alerts_data = [low_alerts, medium_alerts, high_alerts, critical_alerts]
 
@@ -80,10 +96,13 @@ def home():
     )
 
 # ------------------------------------------
-# عرض قائمة التنبيهات
+# 🔹 عرض كل التنبيهات (صفحة Alerts)
 # ------------------------------------------
 @app.route("/alerts")
 def list_alerts():
+    from datetime import datetime
+    import pytz
+
     sev = request.args.get("severity", "").lower()
     allowed = {"low", "medium", "high", "critical"}
 
@@ -92,37 +111,47 @@ def list_alerts():
 
     if sev in allowed:
         cur.execute(
-            "SELECT id, source, event_type, severity, message, created_at FROM alerts WHERE LOWER(severity)=%s ORDER BY id DESC LIMIT 50;",
+            "SELECT id, source, event_type, severity, message, created_at FROM alerts WHERE LOWER(severity)=? ORDER BY id DESC;",
             (sev,),
         )
     else:
         cur.execute(
-            "SELECT id, source, event_type, severity, message, created_at FROM alerts ORDER BY id DESC LIMIT 50;"
+            "SELECT id, source, event_type, severity, message, created_at FROM alerts ORDER BY id DESC;"
         )
 
     rows = cur.fetchall()
     conn.close()
-    return render_template("alerts.html", alerts=rows)
+
+    # 🔹 تعديل الوقت ليكون بتوقيت السعودية بدون النانو ثانية
+    tz_riyadh = pytz.timezone('Asia/Riyadh')
+    # 🔹 حذف النانو ثانية فقط بدون تعديل التوقيت
+    new_rows = []
+    for row in rows:
+        row = list(row)
+        try:
+            row[5] = str(row[5]).split('.')[0]  # يشيل النانو ثانية فقط
+        except:
+            row[5] = str(row[5])
+        new_rows.append(tuple(row))
+
+    # 🔹 عرض النتائج في صفحة HTML
+    return render_template("alerts.html", alerts=new_rows)
 
 # ------------------------------------------
-# إضافة تنبيه جديد (من API أو Telegram)
+# 🔹 إضافة تنبيه جديد عبر API (محاكاة أو Telegram)
 # ------------------------------------------
 @app.route("/alerts/add", methods=["POST"])
 def add_alert():
-    api_key = (request.headers.get("X-API-Key") or "").strip()
-    expected_key = (os.getenv("API_KEY") or "").strip()
-
-    if not expected_key or api_key != expected_key:
-        return jsonify({"error": "Forbidden"}), 403
-
     data = request.get_json()
     if not data:
         return jsonify({"error": "Request must be JSON"}), 400
 
     source = data.get("source", "manual")
     event_type = data.get("event_type", "test")
-    severity = data.get("severity", "low")
     message = data.get("message", "hello")
+
+    severity = classify_event(message)
+
 
     if severity.lower() not in {"low", "medium", "high", "critical"}:
         return jsonify({"error": "Invalid severity"}), 400
@@ -130,44 +159,19 @@ def add_alert():
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO alerts (source, event_type, severity, message) VALUES (%s, %s, %s, %s);",
-        (source, event_type, severity, message),
+        "INSERT INTO alerts (source, event_type, severity, message, created_at) VALUES (?, ?, ?, ?, ?);",
+        (source, event_type, severity, message, datetime.now()),
     )
     conn.commit()
     conn.close()
 
-    # إرسال تنبيه لتليجرام لو الخطورة عالية
     if severity.lower() in {"high", "critical"}:
         send_telegram_alert(f"[{severity.upper()}] {source} — {message}")
 
     return jsonify({"status": "ok", "severity": severity, "message": message})
 
 # ------------------------------------------
-# تصدير التنبيهات إلى CSV
-# ------------------------------------------
-@app.route("/alerts/export.csv")
-def export_csv():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, source, event_type, severity, message, created_at FROM alerts ORDER BY id DESC;")
-    rows = cur.fetchall()
-    conn.close()
-
-    output = []
-    output.append(["ID", "Source", "Event Type", "Severity", "Message", "Time"])
-    for row in rows:
-        output.append(row)
-    csv_data = "\n".join([",".join(map(str, r)) for r in output])
-
-    # نرجع الملف مباشرة بدون حفظه في السيرفر
-    return Response(
-        csv_data,
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=alerts.csv"},
-    )
-
-# ------------------------------------------
-# نموذج إدخال يدوي للتنبيه
+# 🔹 إرسال تنبيه يدوي (Manual Alert)
 # ------------------------------------------
 @app.route("/manual", methods=["GET", "POST"])
 def manual_alert():
@@ -180,8 +184,8 @@ def manual_alert():
         conn = get_conn()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO alerts (source, event_type, severity, message) VALUES (%s, %s, %s, %s);",
-            (source, event_type, severity, message),
+            "INSERT INTO alerts (source, event_type, severity, message, created_at) VALUES (?, ?, ?, ?, ?);",
+            (source, event_type, severity, message, datetime.now()),
         )
         conn.commit()
         conn.close()
@@ -194,53 +198,14 @@ def manual_alert():
     return render_template("manual.html", message_sent=False)
 
 # ------------------------------------------
-# فحص حالة النظام (API)
-# ------------------------------------------
-@app.route("/status.json")
-def status_json():
-    db_ok = False
-    last_alert = None
-    db_error = None
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(created_at) FROM alerts;")
-        row = cur.fetchone()
-        last_alert = row[0] if row and row[0] else None
-        db_ok = True
-    except Exception as e:
-        db_error = str(e)
-    finally:
-        try:
-            conn.close()
-        except:
-            pass
-
-    # فحص حالة التليجرام بدون إرسال فعلي
-    tg_status = "not_configured"
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if token and chat_id:
-        try:
-            r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
-            tg_status = "ok" if (r.status_code == 200 and r.json().get("ok") is True) else f"http_{r.status_code}"
-        except Exception:
-            tg_status = "error"
-
-    return jsonify({
-        "db": {"ok": db_ok, "last_alert": last_alert, "error": db_error},
-        "telegram": tg_status
-    })
-
-# ------------------------------------------
-# حذف تنبيه واحد
+# 🔹 حذف تنبيه واحد
 # ------------------------------------------
 @app.route('/alerts/delete/<int:alert_id>', methods=['POST'])
 def delete_alert(alert_id):
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM alerts WHERE id=%s;", (alert_id,))
+        cursor.execute("DELETE FROM alerts WHERE id=?", (alert_id,))
         conn.commit()
         conn.close()
         return redirect(url_for('list_alerts'))
@@ -249,14 +214,14 @@ def delete_alert(alert_id):
         return redirect(url_for('list_alerts'))
 
 # ------------------------------------------
-# حذف جميع التنبيهات
+# 🔹 حذف جميع التنبيهات
 # ------------------------------------------
 @app.route('/alerts/delete_all', methods=['POST'])
 def delete_all_alerts():
     try:
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM alerts;")
+        cursor.execute("DELETE FROM alerts")
         conn.commit()
         conn.close()
         return redirect(url_for('list_alerts'))
@@ -265,11 +230,41 @@ def delete_all_alerts():
         return redirect(url_for('list_alerts'))
 
 # ------------------------------------------
-# نقطة الفحص (للتحقق من تشغيل السيرفر)
+# 🔹 Health Check (للتأكد أن السيرفر شغال)
 # ------------------------------------------
 @app.route("/healthz")
 def healthz():
     return {"status": "ok"}, 200
 
+# ------------------------------------------
+# تشغيل التطبيق محلياً
+# ------------------------------------------
+# ---------------------------------------
+# 📤 تصدير التنبيهات إلى ملف CSV
+# ---------------------------------------
+@app.route('/alerts/export.csv')
+def export_alerts():
+    import csv
+    from io import StringIO
+
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT event_type, severity, message, created_at FROM alerts ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Event Type', 'Severity', 'Message', 'Time'])
+
+    # 🔹 حذف النانو ثانية فقط
+    for event_type, severity, message, created_at in rows:
+        clean_time = str(created_at).split('.')[0]
+        writer.writerow([event_type, severity, message, clean_time])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Disposition'] = 'attachment; filename=alerts.csv'
+    response.headers['Content-Type'] = 'text/csv'
+    return response
 if __name__ == "__main__":
     app.run(debug=True)
