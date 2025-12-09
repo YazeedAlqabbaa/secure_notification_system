@@ -1,14 +1,21 @@
 import os
 import sqlite3
 import requests
-from flask import Flask, request, jsonify, render_template, redirect, url_for, make_response
+import bcrypt
+from flask import Flask, request, jsonify, render_template, redirect, url_for, make_response, session
 from datetime import datetime
 from dotenv import load_dotenv
 
 # تحميل متغيرات البيئة من ملف .env (لو موجود)
 load_dotenv()
-
 app = Flask(__name__)
+app.secret_key = "supersecretkey"  # غيّرها لاحقاً لقيمة عشوائية قوية
+
+# تسجيل الخروج (Logout)
+@app.route("/logout")
+def logout():
+    session.pop("user_id", None)  # ← حذف الجلسة الحقيقية الجديدة
+    return redirect(url_for("login"))
 
 # ------------------------------------------
 # 🔹 دالة إنشاء اتصال بقاعدة البيانات المحلية app.db
@@ -50,32 +57,95 @@ def classify_event(message):
         return "medium"
     else:
         return "low"
+    
+app.secret_key = "supersecretkey"  # غيرها لاحقاً لقيمة عشوائية
+
+def get_conn():
+    return sqlite3.connect("app.db")
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        conn = sqlite3.connect("app.db")
+        c = conn.cursor()
+        c.execute("SELECT id, password_hash FROM users WHERE username = ?", (username,))
+        user = c.fetchone()
+        conn.close()
+
+        if user and bcrypt.checkpw(password.encode('utf-8'), user[1]):
+            session['user_id'] = user[0]
+            return redirect('/')
+        else:
+            return render_template('login.html', error="Invalid credentials")
+
+    return render_template('login.html')
+
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    error = None
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        conn = get_conn()
+        cursor = conn.cursor()
+
+        # التحقق إذا المستخدم موجود مسبقاً
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            error = "Username already exists."
+        else:
+            cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_pw))
+            conn.commit()
+            conn.close()
+            return redirect(url_for("login"))
+
+        conn.close()
+    return render_template("register.html", error=error)
+
 # 🔹 الصفحة الرئيسية (Dashboard)
 # ------------------------------------------
 
 @app.route('/')
 def home():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    user_id = session["user_id"]
+
     conn = get_conn()
     cursor = conn.cursor()
 
-    def safe_count(query):
-        cursor.execute(query)
+    def safe_count(query, params=None):
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
         result = cursor.fetchone()
         return result[0] if result and result[0] is not None else 0
 
-    # حساب الإحصائيات
-    total_alerts = safe_count("SELECT COUNT(*) FROM alerts")
-    critical_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='critical'")
-    high_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='high'")
-    medium_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='medium'")
-    low_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='low'")
+    # الإحصائيات الخاصة بالمستخدم فقط
+    total_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE user_id=?", (user_id,))
+    critical_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='critical' AND user_id=?", (user_id,))
+    high_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='high' AND user_id=?", (user_id,))
+    medium_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='medium' AND user_id=?", (user_id,))
+    low_alerts = safe_count("SELECT COUNT(*) FROM alerts WHERE severity='low' AND user_id=?", (user_id,))
 
-    # آخر وقت تنبيه حرج فقط
-    cursor.execute("SELECT created_at FROM alerts WHERE severity='critical' ORDER BY id DESC LIMIT 1")
+    # آخر تنبيه حرج للمستخدم فقط
+    cursor.execute(
+        "SELECT created_at FROM alerts WHERE severity='critical' AND user_id=? ORDER BY id DESC LIMIT 1",
+        (user_id,)
+    )
     last_alert = cursor.fetchone()
 
     if last_alert:
-        from datetime import datetime
         dt = datetime.strptime(str(last_alert[0]), "%Y-%m-%d %H:%M:%S.%f")
         last_alert_time = dt.strftime("%Y-%m-%d %H:%M:%S")
     else:
@@ -95,14 +165,19 @@ def home():
         alerts_data=alerts_data
     )
 
+
+
 # ------------------------------------------
 # 🔹 عرض كل التنبيهات (صفحة Alerts)
 # ------------------------------------------
 @app.route("/alerts")
 def list_alerts():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     from datetime import datetime
     import pytz
 
+    user_id = session["user_id"]
     sev = request.args.get("severity", "").lower()
     allowed = {"low", "medium", "high", "critical"}
 
@@ -111,12 +186,13 @@ def list_alerts():
 
     if sev in allowed:
         cur.execute(
-            "SELECT id, source, event_type, severity, message, created_at FROM alerts WHERE LOWER(severity)=? ORDER BY id DESC;",
-            (sev,),
+            "SELECT id, source, event_type, severity, message, created_at FROM alerts WHERE LOWER(severity)=? AND user_id=? ORDER BY id DESC;",
+            (sev, user_id),
         )
     else:
         cur.execute(
-            "SELECT id, source, event_type, severity, message, created_at FROM alerts ORDER BY id DESC;"
+            "SELECT id, source, event_type, severity, message, created_at FROM alerts WHERE user_id=? ORDER BY id DESC;",
+            (user_id,),
         )
 
     rows = cur.fetchall()
@@ -137,11 +213,14 @@ def list_alerts():
     # 🔹 عرض النتائج في صفحة HTML
     return render_template("alerts.html", alerts=new_rows)
 
+
 # ------------------------------------------
 # 🔹 إضافة تنبيه جديد عبر API (محاكاة أو Telegram)
 # ------------------------------------------
 @app.route("/alerts/add", methods=["POST"])
 def add_alert():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     data = request.get_json()
     if not data:
         return jsonify({"error": "Request must be JSON"}), 400
@@ -152,15 +231,16 @@ def add_alert():
 
     severity = classify_event(message)
 
-
     if severity.lower() not in {"low", "medium", "high", "critical"}:
         return jsonify({"error": "Invalid severity"}), 400
+
+    user_id = session["user_id"]   # ← إضافة user_id
 
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO alerts (source, event_type, severity, message, created_at) VALUES (?, ?, ?, ?, ?);",
-        (source, event_type, severity, message, datetime.now()),
+        "INSERT INTO alerts (source, event_type, severity, message, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?);",
+        (source, event_type, severity, message, datetime.now(), user_id),
     )
     conn.commit()
     conn.close()
@@ -175,17 +255,21 @@ def add_alert():
 # ------------------------------------------
 @app.route("/manual", methods=["GET", "POST"])
 def manual_alert():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     if request.method == "POST":
         source = request.form.get("source")
         event_type = request.form.get("event_type")
         severity = request.form.get("severity")
         message = request.form.get("message")
 
+        user_id = session["user_id"]  # ← إضافة user_id
+
         conn = get_conn()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO alerts (source, event_type, severity, message, created_at) VALUES (?, ?, ?, ?, ?);",
-            (source, event_type, severity, message, datetime.now()),
+            "INSERT INTO alerts (source, event_type, severity, message, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?);",
+            (source, event_type, severity, message, datetime.now(), user_id),
         )
         conn.commit()
         conn.close()
@@ -202,10 +286,13 @@ def manual_alert():
 # ------------------------------------------
 @app.route('/alerts/delete/<int:alert_id>', methods=['POST'])
 def delete_alert(alert_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     try:
+        user_id = session["user_id"]
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM alerts WHERE id=?", (alert_id,))
+        cursor.execute("DELETE FROM alerts WHERE id=? AND user_id=?", (alert_id, user_id))
         conn.commit()
         conn.close()
         return redirect(url_for('list_alerts'))
@@ -218,10 +305,13 @@ def delete_alert(alert_id):
 # ------------------------------------------
 @app.route('/alerts/delete_all', methods=['POST'])
 def delete_all_alerts():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     try:
+        user_id = session["user_id"]
         conn = get_conn()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM alerts")
+        cursor.execute("DELETE FROM alerts WHERE user_id=?", (user_id,))
         conn.commit()
         conn.close()
         return redirect(url_for('list_alerts'))
@@ -234,22 +324,25 @@ def delete_all_alerts():
 # ------------------------------------------
 @app.route("/healthz")
 def healthz():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     return {"status": "ok"}, 200
 
 # ------------------------------------------
-# تشغيل التطبيق محلياً
-# ------------------------------------------
-# ---------------------------------------
 # 📤 تصدير التنبيهات إلى ملف CSV
-# ---------------------------------------
+# ------------------------------------------
 @app.route('/alerts/export.csv')
 def export_alerts():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     import csv
     from io import StringIO
 
+    user_id = session["user_id"]
+
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT event_type, severity, message, created_at FROM alerts ORDER BY id DESC")
+    cursor.execute("SELECT event_type, severity, message, created_at FROM alerts WHERE user_id=? ORDER BY id DESC", (user_id,))
     rows = cursor.fetchall()
     conn.close()
 
@@ -266,5 +359,6 @@ def export_alerts():
     response.headers['Content-Disposition'] = 'attachment; filename=alerts.csv'
     response.headers['Content-Type'] = 'text/csv'
     return response
+
 if __name__ == "__main__":
     app.run(debug=True)

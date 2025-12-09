@@ -164,6 +164,22 @@ body {
 <body>
   <div class="status-bar">
     🟢 System running normally — Last update: {{ last_update }}
+   <a href="{{ url_for('logout') }}"
+   style="
+      float: right;
+      background-color: white;
+      color: #ff4d4d;
+      font-weight: 600;
+      text-decoration: none;
+      margin-right: 20px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: 0.3s;
+   "
+   onmouseover="this.style.backgroundColor='#ffe6e6';"
+   onmouseout="this.style.backgroundColor='white';">
+   🚪 Logout
+</a>
   </div>
 
   <div class="container">

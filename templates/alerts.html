@@ -125,10 +125,30 @@ tr[data-severity="low"] {
 <body>
  <!-- Unified Top Navbar -->
 <div class="status-bar">
-  <nav style="display: flex; justify-content: center; gap: 20px;">
-    <a href="{{ url_for('home') }}" class="nav-link">🏠 Home</a>
-    <a href="{{ url_for('manual_alert') }}" class="nav-link">✍️ Manual Alert</a>
-  </nav>
+<nav style="display: flex; justify-content: center; align-items: center; position: relative; gap: 20px;">
+
+    <div style="display: flex; justify-content: center; gap: 20px;">
+        <a href="{{ url_for('home') }}" class="nav-link">🏠 Home</a>
+        <a href="{{ url_for('manual_alert') }}" class="nav-link">⚡ Manual Alert</a>
+    </div>
+
+    <a href="{{ url_for('logout') }}"
+       style="
+          position: absolute;
+          right: 20px;
+          background-color: white;
+          color: #ff4d4d;
+          font-weight: 600;
+          text-decoration: none;
+          padding: 6px 12px;
+          border-radius: 6px;
+          transition: 0.3s;
+       "
+       onmouseover="this.style.backgroundColor='#ffe6e6';"
+       onmouseout="this.style.backgroundColor='white';">
+       🚪 Logout
+    </a>
+</nav>
 </div>
 
 <style>
